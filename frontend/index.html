@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Notion Book Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-api-base="http://localhost:8000" data-api-key="">
+  <main class="page">
+    <header class="hero">
+      <p class="eyebrow">Notion Book Tracker</p>
+      <h1>Find a book, add it to Notion in one tap.</h1>
+      <p class="subtitle">Search Google Books, then drop results straight into your Notion database.</p>
+    </header>
+
+    <section class="search" aria-label="Book search">
+      <div class="search-bar">
+        <input id="searchInput" type="search" placeholder="Search by title, author, or ISBN" autocomplete="off" />
+        <button id="searchButton" type="button">Search</button>
+      </div>
+      <p id="searchHint" class="hint">Tip: paste an ISBN for fast matches.</p>
+    </section>
+
+    <section class="results" aria-live="polite" aria-busy="false">
+      <div id="results" class="results-grid"></div>
+    </section>
+  </main>
+
+  <template id="resultCard">
+    <article class="card">
+      <div class="cover"></div>
+      <div class="card-body">
+        <h2 class="title"></h2>
+        <p class="authors"></p>
+        <p class="meta"></p>
+        <div class="card-actions">
+          <button class="add-button" type="button">Add to Notion</button>
+          <span class="status"></span>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
