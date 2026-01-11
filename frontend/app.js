@@ -96,7 +96,9 @@ function renderResults(results) {
           cover_url: book.cover_url,
           google_books_id: book.google_books_id,
           categories: book.categories || [],
-          page_count: book.page_count || null
+          page_count: book.page_count || null,
+          description: book.description || null,
+          publisher: book.publisher || null
         },
         statusEl,
         addButton,

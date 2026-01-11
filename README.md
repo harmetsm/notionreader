@@ -76,6 +76,5 @@ Common mappings:
 If your `Author` field is a relation to an Author database, set these in `backend/.env`:
 - `NOTION_AUTHOR_RELATION_PROP` (default `Author`)
 - `NOTION_AUTHOR_DB_ID` (the author database ID)
-- `NOTION_AUTHOR_TITLE_PROP` (title property name, default `Name`)
 
 When enabled, the API will query for matching author pages and create them if missing.
