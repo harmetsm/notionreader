@@ -168,6 +168,25 @@ body {
   font-weight: 600;
 }
 
+.add-button[disabled] {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(45, 91, 255, 0.2);
+  border-top-color: var(--accent-2);
+  animation: spin 0.8s linear infinite;
+  display: none;
+}
+
+.card-actions.is-loading .spinner {
+  display: inline-block;
+}
+
 .status {
   font-size: 13px;
   color: var(--muted);
@@ -184,5 +203,11 @@ body {
 
   .search-bar button {
     width: 100%;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }

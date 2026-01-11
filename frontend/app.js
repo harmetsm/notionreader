@@ -27,8 +27,10 @@ async function fetchBooks(query) {
   return response.json();
 }
 
-async function addBook(payload, statusEl) {
+async function addBook(payload, statusEl, buttonEl, actionsEl) {
   statusEl.textContent = "Adding...";
+  buttonEl.disabled = true;
+  actionsEl.classList.add("is-loading");
   try {
     const response = await fetch(`${API_BASE}/add`, {
       method: "POST",
@@ -45,8 +47,12 @@ async function addBook(payload, statusEl) {
     }
 
     statusEl.textContent = "Added to Notion";
+    buttonEl.textContent = "Added";
   } catch (error) {
     statusEl.textContent = error.message || "Could not add";
+  } finally {
+    buttonEl.disabled = false;
+    actionsEl.classList.remove("is-loading");
   }
 }
 
@@ -65,6 +71,7 @@ function renderResults(results) {
     const authorsEl = card.querySelector(".authors");
     const metaEl = card.querySelector(".meta");
     const addButton = card.querySelector(".add-button");
+    const actionsEl = card.querySelector(".card-actions");
     const statusEl = card.querySelector(".status");
 
     if (book.cover_url) {
@@ -80,7 +87,7 @@ function renderResults(results) {
     metaEl.textContent = metaParts.join(" · ");
 
     addButton.addEventListener("click", () => {
-    addBook(
+      addBook(
         {
           title: book.title,
           authors: book.authors,
@@ -89,10 +96,11 @@ function renderResults(results) {
           cover_url: book.cover_url,
           google_books_id: book.google_books_id,
           categories: book.categories || [],
-          page_count: book.page_count || null,
-          status: "Want to Read"
+          page_count: book.page_count || null
         },
-        statusEl
+        statusEl,
+        addButton,
+        actionsEl
       );
     });
 
