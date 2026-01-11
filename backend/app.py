@@ -21,9 +21,7 @@ NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY")
 API_KEY = os.getenv("API_KEY")
 RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "60"))
-NOTION_AUTHOR_RELATION_PROP = os.getenv("NOTION_AUTHOR_RELATION_PROP", "Author")
 NOTION_AUTHOR_DB_ID = os.getenv("NOTION_AUTHOR_DB_ID")
-NOTION_AUTHOR_TITLE_PROP = os.getenv("NOTION_AUTHOR_TITLE_PROP", "")
 
 NOTION_VERSION = "2022-06-28"
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
@@ -54,11 +52,14 @@ class AddBookPayload(BaseModel):
     google_books_id: Optional[str] = None
     categories: List[str] = []
     page_count: Optional[int] = None
+    description: Optional[str] = None
+    publisher: Optional[str] = None
     notes: Optional[str] = None
 
 
 _rate_bucket: Dict[str, List[float]] = {}
 _database_title_prop_cache: Dict[str, str] = {}
+_database_schema_cache: Dict[str, Dict[str, str]] = {}
 
 
 def _notion_headers() -> Dict[str, str]:
@@ -95,24 +96,54 @@ async def _get_database_title_property_name(client: httpx.AsyncClient, database_
     return None
 
 
-async def _resolve_author_title_property_name(client: httpx.AsyncClient) -> Optional[str]:
-    if not NOTION_AUTHOR_DB_ID:
-        return None
+async def _get_database_schema(client: httpx.AsyncClient, database_id: str) -> Dict[str, str]:
+    cached = _database_schema_cache.get(database_id)
+    if cached is not None:
+        return cached
 
-    discovered = await _get_database_title_property_name(client, NOTION_AUTHOR_DB_ID)
-    configured = NOTION_AUTHOR_TITLE_PROP.strip()
+    response = await client.get(_notion_database_url(database_id), headers=_notion_headers())
+    if response.status_code >= 400:
+        logger.warning("Database fetch error: %s %s", response.status_code, response.text)
+        _database_schema_cache[database_id] = {}
+        return {}
 
-    if not configured:
-        return discovered
-    if not discovered:
-        return configured
-    if configured != discovered:
-        logger.info(
-            "Author title prop mismatch (env=%r, discovered=%r); using discovered.",
-            configured,
-            discovered,
-        )
-    return discovered
+    properties = (response.json() or {}).get("properties", {}) or {}
+    schema = {prop_name: (prop or {}).get("type", "") for prop_name, prop in properties.items()}
+    _database_schema_cache[database_id] = schema
+    return schema
+
+
+def _set_rich_text(properties: Dict[str, Any], schema: Dict[str, str], name: str, value: Optional[str]) -> None:
+    if not value:
+        return
+    if schema.get(name) != "rich_text":
+        return
+    properties[name] = {"rich_text": [{"text": {"content": value}}]}
+
+
+def _set_url(properties: Dict[str, Any], schema: Dict[str, str], name: str, value: Optional[str]) -> None:
+    if not value:
+        return
+    if schema.get(name) != "url":
+        return
+    properties[name] = {"url": value}
+
+
+def _set_multi_select(properties: Dict[str, Any], schema: Dict[str, str], name: str, values: List[str]) -> None:
+    values = [v for v in values if v]
+    if not values:
+        return
+    if schema.get(name) != "multi_select":
+        return
+    properties[name] = {"multi_select": [{"name": v} for v in values]}
+
+
+def _set_number(properties: Dict[str, Any], schema: Dict[str, str], name: str, value: Optional[int]) -> None:
+    if value is None:
+        return
+    if schema.get(name) != "number":
+        return
+    properties[name] = {"number": value}
 
 
 def _require_api_key(request: Request) -> None:
@@ -163,32 +194,36 @@ def _normalize_google_book(item: Dict[str, Any]) -> Dict[str, Any]:
         "isbn": _best_isbn(identifiers),
         "cover_url": thumbnail,
         "description": info.get("description"),
+        "publisher": info.get("publisher"),
         "categories": info.get("categories", []) or [],
         "page_count": info.get("pageCount"),
     }
 
 
-def _build_properties(payload: AddBookPayload) -> Dict[str, Any]:
-    properties: Dict[str, Any] = {
-        "Title": {"title": [{"text": {"content": payload.title}}]},
-    }
-    if payload.categories:
-        properties["Genres"] = {
-            "multi_select": [{"name": genre} for genre in payload.categories]
-        }
+def _notion_cover(url: str) -> Dict[str, Any]:
+    return {"type": "external", "external": {"url": url}}
 
-    if payload.page_count:
-        properties["Total Pages"] = {"number": payload.page_count}
+
+def _build_book_properties(payload: AddBookPayload, schema: Dict[str, str], title_prop: str) -> Dict[str, Any]:
+    properties: Dict[str, Any] = {title_prop: {"title": [{"text": {"content": payload.title}}]}}
+
+    _set_rich_text(properties, schema, "Summary", payload.description)
+    _set_multi_select(properties, schema, "Tropes", payload.categories)
+    _set_rich_text(properties, schema, "Publication Date", payload.published)
+    _set_rich_text(properties, schema, "ISBN", payload.isbn)
+    _set_rich_text(properties, schema, "Google Books ID", payload.google_books_id)
+    _set_url(properties, schema, "Book Cover", payload.cover_url)
+    _set_rich_text(properties, schema, "Publisher", payload.publisher)
 
     return properties
 
 
 async def _attach_author_relations(properties: Dict[str, Any], authors: List[str]) -> None:
-    if not NOTION_AUTHOR_RELATION_PROP or not NOTION_AUTHOR_DB_ID or not authors:
+    if not NOTION_AUTHOR_DB_ID or not authors:
         return
     author_ids = await _get_or_create_author_ids(authors)
     if author_ids:
-        properties[NOTION_AUTHOR_RELATION_PROP] = {
+        properties["Author"] = {
             "relation": [{"id": author_id} for author_id in author_ids]
         }
 
@@ -201,15 +236,10 @@ async def _get_or_create_author_ids(authors: List[str]) -> List[str]:
 
     author_ids: List[str] = []
     async with httpx.AsyncClient(timeout=10) as client:
-        title_prop = await _resolve_author_title_property_name(client)
-        if not title_prop:
-            logger.warning("Could not resolve author title property name; skipping author linking.")
-            return []
-
         for name in authors:
             query_payload = {
                 "filter": {
-                    "property": title_prop,
+                    "property": "Name",
                     "title": {"equals": name},
                 }
             }
@@ -227,7 +257,7 @@ async def _get_or_create_author_ids(authors: List[str]) -> List[str]:
             create_payload = {
                 "parent": {"database_id": NOTION_AUTHOR_DB_ID},
                 "properties": {
-                    title_prop: {"title": [{"text": {"content": name}}]}
+                    "Name": {"title": [{"text": {"content": name}}]}
                 },
             }
             create_response = await client.post(NOTION_PAGES_URL, json=create_payload, headers=headers)
@@ -275,7 +305,7 @@ async def add_book(request: Request, payload: AddBookPayload) -> Dict[str, Any]:
     if not NOTION_TOKEN or not NOTION_DATABASE_ID:
         raise HTTPException(status_code=500, detail="Notion credentials not configured")
 
-    properties = _build_properties(payload)
+    properties = _build_book_properties(payload, await _get_database_schema(httpx.AsyncClient(), NOTION_DATABASE_ID), await _get_database_title_property_name(httpx.AsyncClient(), NOTION_DATABASE_ID))
     await _attach_author_relations(properties, payload.authors)
 
     notion_payload = {
